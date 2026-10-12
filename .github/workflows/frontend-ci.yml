@@ -1,0 +1,66 @@
+﻿name: SIPFUND Frontend CI
+
+on:
+  push:
+    branches:
+      - main
+      - uat
+  pull_request:
+    branches:
+      - main
+      - uat
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint, Build and Docker Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Build Docker image
+        run: docker build -t sipfund-frontend:ci .
+
+      - name: Start Docker container
+        run: docker run -d --name sipfund-frontend-ci -p 3000:3000 sipfund-frontend:ci
+
+      - name: Verify application responds
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://localhost:3000/ > /dev/null; then
+              echo "Frontend responded successfully."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sipfund-frontend-ci
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs sipfund-frontend-ci || true
+
+      - name: Clean up Docker container
+        if: always()
+        run: docker rm -f sipfund-frontend-ci || true
